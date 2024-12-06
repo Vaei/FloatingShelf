@@ -50,7 +50,29 @@ class FloatingShelfUI:
         for child in children:
             cmds.deleteUI(child)
 
+    @staticmethod
+    def close_layout_dialog():
+        """Close the layout dialog if it is open."""
+        cmds.layoutDialog(dismiss="Close")
+
+    def close_window(self):
+        if cmds.dockControl("floatingShelfDock", exists=True):
+            cmds.deleteUI("floatingShelfDock")
+        if cmds.window("floatingShelfUI", exists=True):
+            cmds.deleteUI("floatingShelfUI")
+
     def __init__(self):
+        # Toggle the window if it is already open with each activation
+        # Note: without evalDeferred, Maya will hard crash when closing the window due to the layoutDialog not being closed yet
+        if cmds.dockControl("floatingShelfDock", exists=True):
+            cmds.layoutDialog(dismiss="Close")
+            cmds.evalDeferred(lambda: self.close_window(), lowestPriority=True)
+            return
+        if cmds.window("floatingShelfUI", exists=True):
+            cmds.layoutDialog(dismiss="Close")
+            cmds.evalDeferred(lambda: self.close_window(), lowestPriority=True)
+            return
+
         self.shelves = self.load_shelf_prefs()
         self.default_shelf = self.shelves.get("_default", "Default")
         self.last_window_width = None  # Track the last window width for resize handling
@@ -71,15 +93,19 @@ class FloatingShelfUI:
         self.save_shelf_prefs(self.shelves)
         self.create_ui()
 
-    def create_ui(self):
-        """Create the main floating shelf UI as a dockable window."""
-        if cmds.dockControl("floatingShelfDock", exists=True):
-            cmds.deleteUI("floatingShelfDock", control=True)
+    def delete_ui(self):
+        """Delete the main UI window."""
         if cmds.window("floatingShelfUI", exists=True):
             cmds.deleteUI("floatingShelfUI", window=True)
+        if cmds.dockControl("floatingShelfDock", exists=True):
+            cmds.deleteUI("floatingShelfDock", control=True)
 
-        self.window = cmds.window("floatingShelfUI", title="Floating Shelf", sizeable=True, widthHeight=(400, 300))
-        self.layout = cmds.formLayout()
+    def create_ui(self):
+        """Create the main floating shelf UI as a dockable window."""
+        self.window = cmds.window("floatingShelfUI", title="Floating Shelf", sizeable=True, widthHeight=(400, 300), closeCommand=self.delete_ui)
+        self.layout = cmds.formLayout("floatingShelfLayout", parent=self.window)
+
+        cmds.scriptJob(uiDeleted=[self.window, lambda: self.delete_ui()])
 
         # Top toolbar
         self.toolbar = cmds.rowLayout(
@@ -200,11 +226,11 @@ class FloatingShelfUI:
         cmds.text(label="Created by: Jared Taylor")
         cmds.text(label="https://github.com/Vaei/FloatingShelf")
         cmds.separator(style="none", height=10)
-        cmds.button(label="Close", command=lambda _: cmds.layoutDialog(dismiss="Close"))
+        cmds.button(label="Close", command=lambda _: self.close_layout_dialog())
 
     def about(self, *_):
         """Display information about the tool."""
-        cmds.layoutDialog(title="About", ui=lambda: self.create_about_dialog())
+        cmds.layoutDialog(parent=self.window, title="About", ui=lambda: self.create_about_dialog())
 
     def delete_shelf(self, *_):
         """Delete the current shelf and update the dropdown menu."""
@@ -290,7 +316,7 @@ class FloatingShelfUI:
 
     def create_add_button(self):
         """Create the add button."""
-        cmds.iconTextButton(
+        cmds.shelfButton(
             parent=self.button_grid,
             image=FloatingShelfStatics.ICONS["add_button"],
             width=FloatingShelfStatics.BUTTON_SIZE,
@@ -436,41 +462,69 @@ class FloatingShelfUI:
 
         cmds.showWindow(window)
 
+    @staticmethod
+    def get_all_maya_icons():
+        maya_icon_paths_str = os.getenv("MAYA_FILE_ICON_PATH", "")
+        xbm_lang_paths_str = os.getenv("XBMLANGPATH", "")
+        path_separator = ';' if os.name == 'nt' else ':'
+        maya_icon_paths = maya_icon_paths_str.split(path_separator)
+        xbm_lang_paths = xbm_lang_paths_str.split(path_separator)
+        all_paths = list(set(maya_icon_paths + xbm_lang_paths))
+        all_icons = []
+        image_extensions = ['*.png', '*.svg', '*.bmp', '*.jpg', '*.jpeg', '*.xpm']
+        for path in all_paths:
+            if os.path.isdir(path):
+                for extension in image_extensions:
+                    all_icons.extend(glob.glob(os.path.join(path, extension)))
+        all_icons = list(set(all_icons))
+        all_icons.sort()
+        return all_icons
+
     def create_icon_browser(self, button_data, button):
         """Creates the icon browser for selecting an icon."""
-        maya_location = os.getenv('MAYA_LOCATION', default=cmds.internalVar(upd=True).rsplit('prefs', 1)[0])
-        maya_location = os.path.normpath(maya_location)  # Normalize path
-        icons_path = os.path.join(maya_location, "icons")
-        all_icons = [os.path.basename(x) for x in glob.glob(os.path.join(icons_path, '*.png')) + glob.glob(os.path.join(icons_path, '*.svg'))]
+        all_icons = self.get_all_maya_icons()
 
         def update_icon_preview(*args):
             selected_icon = cmds.textScrollList(icon_list, query=True, selectItem=True)
             if selected_icon:
-                icon_path = os.path.join(icons_path, selected_icon[0])
-                cmds.image(image_control, edit=True, image=icon_path)
+                icon_path = selected_icon[0]  # Assuming the full path is stored in the list
+
+                # Create a temporary image plane to get the image size
+                temp_image_plane = cmds.imagePlane(fileName=icon_path)[0]
+                width = cmds.getAttr(temp_image_plane + ".width")
+                height = cmds.getAttr(temp_image_plane + ".height")
+                cmds.delete(temp_image_plane)  # Clean up the temporary image plane
+
+                # Define the maximum dimensions for the image control
+                max_width, max_height = 300, 150
+
+                # Calculate the scaling factor while maintaining the aspect ratio
+                scale = min(max_width / width, max_height / height)
+
+                # Calculate new dimensions
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+
+                # Update the image control with the scaled dimensions
+                cmds.image(image_control, edit=True, image=icon_path, width=new_width, height=new_height)
 
         def filter_icons(*args):
-            filter_text = cmds.textField(text_field, query=True, text=True)
-            filtered_items = [icon for icon in all_icons if filter_text.lower() in icon.lower()]
+            filter_text = cmds.textField(text_field, query=True, text=True).lower()
+            filtered_items = [icon for icon in all_icons if filter_text in icon.lower()]
             cmds.textScrollList(icon_list, edit=True, removeAll=True)
-            if filtered_items:
-                cmds.textScrollList(icon_list, edit=True, append=filtered_items)
-            else:
-                cmds.textScrollList(icon_list, edit=True, append=all_icons)  # Repopulate with all icons if filter is empty or no match
+            cmds.textScrollList(icon_list, edit=True, append=filtered_items if filtered_items else all_icons)
 
         def apply_icon_and_close(icon, *args):
-            """Callback to capture the selected icon and close the temporary window."""
-            button_data["icon"] = icon
-            cmds.iconTextButton(button, edit=True, image=icon)
+            cmds.shelfButton(button, edit=True, image=icon)
             self.save_shelf_prefs(self.shelves)
-            cmds.layoutDialog(dismiss="Close")
+            self.close_layout_dialog()
 
-        def browse_image(button_data, *args):
-            file_path = cmds.fileDialog2(fileMode=1, fileFilter="Image Files (*.png *.svg)")
+        def browse_image(*args):
+            file_path = cmds.fileDialog2(fileMode=1, fileFilter="Image Files (*.png *.svg *.bmp *.jpg *.jpeg)")
             if file_path:
                 apply_icon_and_close(file_path[0])
 
-        def select_image(button_data, *args):
+        def select_image(*args):
             selected_icon = cmds.textScrollList(icon_list, query=True, selectItem=True)
             if selected_icon:
                 apply_icon_and_close(selected_icon[0])
@@ -519,7 +573,7 @@ class FloatingShelfUI:
         if cmds.window("iconBrowserWindow", exists=True):
             cmds.deleteUI("iconBrowserWindow")
 
-        cmds.layoutDialog(title="Select Icon", ui=lambda: self.create_icon_browser(button_data, button))
+        cmds.layoutDialog(parent=self.window, title="Select Icon", ui=lambda: self.create_icon_browser(button_data, button))
 
     def delete_button(self, button, button_data):
         """Delete a button and refresh the layout using deferred commands to ensure stability."""
