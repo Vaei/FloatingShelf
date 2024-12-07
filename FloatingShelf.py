@@ -8,12 +8,17 @@ class FloatingShelfStatics:
     title = "Floating Shelf"
     version = "100"
     version_flags = "-beta"
+
+    window_name = "floatingShelfUI"
+    dock_name = "floatingShelfDock"
+
     BUTTON_SIZE = 40
     DEFAULT_ICON = "commandButton.png"
     ICONS = {
         "add_shelf": "addBookmark.png",
         "delete_shelf": "delete.png",
         "set_default": "Bool_Mode2.png",
+        "move_up": "moveLayerUp.png",
         "rename_shelf": "BluePencil.png",
         "add_button": "addClip_100.png",
         "info": "info.png",
@@ -40,8 +45,12 @@ class FloatingShelfUI:
 
     @staticmethod
     def save_shelf_prefs(shelf_data):
-        with open(FloatingShelfStatics.SHELF_PREFS_PATH, "w") as f:
-            json.dump(shelf_data, f, indent=4)
+        try:
+            with open(FloatingShelfStatics.SHELF_PREFS_PATH, "w") as f:
+                json.dump(shelf_data, f, indent=4)
+        except Exception as e:
+            cmds.error("Failed to save preferences: {}".format(e))
+            raise
 
     @staticmethod
     def clear_layout(layout):
@@ -58,11 +67,11 @@ class FloatingShelfUI:
     def __init__(self):
         # Toggle the window if it is already open with each activation
         # Note: without evalDeferred, Maya will hard crash when closing the window due to the layoutDialog not being closed yet
-        if cmds.dockControl("floatingShelfDock", exists=True):
+        if cmds.dockControl(FloatingShelfStatics.dock_name, exists=True):
             cmds.layoutDialog(dismiss="Close")
             cmds.evalDeferred(lambda: self.delete_ui(), lowestPriority=True)
             return
-        if cmds.window("floatingShelfUI", exists=True):
+        if cmds.window(FloatingShelfStatics.window_name, exists=True):
             cmds.layoutDialog(dismiss="Close")
             cmds.evalDeferred(lambda: self.delete_ui(), lowestPriority=True)
             return
@@ -89,20 +98,20 @@ class FloatingShelfUI:
 
     def delete_ui(self):
         """Delete the main UI window."""
-        if cmds.window("floatingShelfUI", exists=True):
-            cmds.deleteUI("floatingShelfUI", window=True)
-        if cmds.dockControl("floatingShelfDock", exists=True):
-            cmds.deleteUI("floatingShelfDock", control=True)
+        if cmds.window(FloatingShelfStatics.window_name, exists=True):
+            cmds.deleteUI(FloatingShelfStatics.window_name, window=True)
+        if cmds.dockControl(FloatingShelfStatics.dock_name, exists=True):
+            cmds.deleteUI(FloatingShelfStatics.dock_name, control=True)
 
     def create_ui(self):
         """Create the main floating shelf UI as a dockable window."""
-        self.window = cmds.window("floatingShelfUI", title="Floating Shelf", sizeable=True, widthHeight=(400, 300))
+        self.window = cmds.window(FloatingShelfStatics.window_name, title="Floating Shelf", sizeable=True, widthHeight=(400, 300))
         self.layout = cmds.formLayout("floatingShelfLayout", parent=self.window)
 
         # Top toolbar
         self.toolbar = cmds.rowLayout(
             parent=self.layout,
-            numberOfColumns=6,
+            numberOfColumns=7,
             columnWidth5=(100, 25, 25, 25, 25),
             adjustableColumn=1,
             columnAlign=(1, "center"),
@@ -111,6 +120,7 @@ class FloatingShelfUI:
         self.update_dropdown_menu()
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["add_shelf"], ann="Add New Shelf", width=25, height=25, command=self.add_shelf)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["set_default"], ann="Set Default Shelf", width=25, height=25, command=self.set_default_shelf)
+        cmds.iconTextButton(image=FloatingShelfStatics.ICONS["move_up"], ann="Move Shelf Up", width=25, height=25, command=self.move_shelf_up)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["rename_shelf"], ann="Rename Shelf", width=25, height=25, command=self.rename_shelf)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["delete_shelf"], ann="Delete Shelf", width=25, height=25, command=self.delete_shelf)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["info"], ann="About", width=25, height=25, command=self.about)
@@ -141,9 +151,11 @@ class FloatingShelfUI:
 
         # Create the dockControl
         cmds.dockControl(
-            "floatingShelfDock",
+            FloatingShelfStatics.dock_name,
             label="Floating Shelf",
             area="right",
+            width=300,
+            height=170,
             moveable=True,
             content=self.window,
             floating=True,
@@ -155,8 +167,8 @@ class FloatingShelfUI:
     def close_menu(self, *_):
         """Close the floating shelf window."""
         cmds.deleteUI(self.window, window=True)
-        if cmds.dockControl("floatingShelfDock", exists=True):
-            cmds.deleteUI("floatingShelfDock", control=True)
+        if cmds.dockControl(FloatingShelfStatics.dock_name, exists=True):
+            cmds.deleteUI(FloatingShelfStatics.dock_name, control=True)
 
     def monitor_window_resize(self):
         """Monitor window resizing."""
@@ -277,6 +289,28 @@ class FloatingShelfUI:
         self.save_shelf_prefs(self.shelves)
         cmds.inViewMessage(amg=f"Default shelf set to: {self.current_shelf}", pos="topCenter", fade=True)
 
+    def move_shelf_up(self, *_):
+        """Move the current shelf up in the list."""
+        shelf_names = list(self.shelves.keys())
+        if self.current_shelf == shelf_names[0]:
+            cmds.warning("Shelf is already at the top.")
+            return
+
+        current_index = shelf_names.index(self.current_shelf)
+        shelf_names[current_index], shelf_names[current_index - 1] = shelf_names[current_index - 1], shelf_names[current_index]
+        self.shelves = {key: self.shelves[key] for key in shelf_names}
+        self.save_shelf_prefs(self.shelves)
+        self.update_dropdown_menu()
+
+    def rebuild_shelves(self):
+        # Clear and load the shelf
+        self.clear_layout(self.button_grid)
+        for button_data in self.shelves.get(self.current_shelf, []):
+            self.create_button(button_data)
+
+        # Add the "+" button
+        self.create_add_button()
+
     def load_shelf(self, shelf_name):
         """Load all buttons for the given shelf."""
         if shelf_name not in self.shelves:
@@ -291,12 +325,7 @@ class FloatingShelfUI:
                 self.save_shelf_prefs(self.shelves)
 
         # Clear and load the shelf
-        self.clear_layout(self.button_grid)
-        for button_data in self.shelves.get(self.current_shelf, []):
-            self.create_button(button_data)
-
-        # Add the "+" button
-        self.create_add_button()
+        cmds.evalDeferred(lambda: self.rebuild_shelves())
 
     def change_shelf(self, shelf_name):
         """Handle switching to a different shelf."""
@@ -324,7 +353,7 @@ class FloatingShelfUI:
             button_label = cmds.promptDialog(query=True, text=True)
             button_data = {
                 "label": button_label,
-                "command": f'print("{button_label} clicked")',
+                "command": "",
                 "icon": FloatingShelfStatics.DEFAULT_ICON,
                 "tooltip": button_label,
                 "type": "python",
@@ -342,7 +371,7 @@ class FloatingShelfUI:
             width=FloatingShelfStatics.BUTTON_SIZE,
             height=FloatingShelfStatics.BUTTON_SIZE,
             imageOverlayLabel=button_data["label"],
-            annotation=button_data.get("tooltip", button_data["label"]),
+            ann=button_data.get("tooltip", button_data["label"]),
             style="iconAndTextVertical",  # Centers the icon and label
             scaleIcon=False,
             font="smallFixedWidthFont",
@@ -355,6 +384,7 @@ class FloatingShelfUI:
         cmds.menuItem(label="Move Left", command=lambda _: self.move_button_left(button_data), enable=self.can_move_button(button_data, -1))
         cmds.menuItem(label="Move Right", command=lambda _: self.move_button_right(button_data), enable=self.can_move_button(button_data, 1))
         cmds.menuItem(label="Set Label", command=lambda _: self.set_button_label(button_data))
+        cmds.menuItem(label="Set Tooltip", command=lambda _: self.set_button_tooltip(button_data))
         cmds.menuItem(label="Edit Command", command=lambda _: self.edit_button_command(button_data))
         cmds.menuItem(label="Change Icon", command=lambda _: self.change_button_icon(button_data, button))
         cmds.menuItem(label="Delete", command=lambda _: self.delete_button(button, button_data))
@@ -398,21 +428,25 @@ class FloatingShelfUI:
             new_label = cmds.promptDialog(query=True, text=True)
             if new_label:
                 button_data["label"] = new_label
+                self.save_shelf_prefs(self.shelves)
+                self.load_shelf(self.current_shelf)
+
+    def set_button_tooltip(self, button_data):
+        """Set a new label for the button."""
+        result = cmds.promptDialog(title="Set Tooltip", message="Enter Button Tooltip:", text=button_data["tooltip"], button=["OK", "Cancel"])
+        if result == "OK":
+            new_label = cmds.promptDialog(query=True, text=True)
+            if new_label:
                 button_data["tooltip"] = new_label
                 self.save_shelf_prefs(self.shelves)
                 self.load_shelf(self.current_shelf)
 
-    def edit_button_command(self, button_data):
-        """Open a dialog to edit the button's command and type."""
-        if cmds.window("editCommandWindow", exists=True):
-            cmds.deleteUI("editCommandWindow")
-
-        # Create a new window for editing
-        window = cmds.window("editCommandWindow", title="Edit Command", sizeable=False, widthHeight=(400, 300))
-        layout = cmds.formLayout()
+    def create_button_command(self, button_data):
+        main_layout = cmds.setParent(q=True)
 
         # Command type options (Python or MEL)
         command_type_radio = cmds.radioButtonGrp(
+            p=main_layout,
             label="Command Type:",
             numberOfRadioButtons=2,
             labelArray2=["Python", "MEL"],
@@ -420,18 +454,18 @@ class FloatingShelfUI:
         )
 
         # Multiline text field for editing the command
-        command_field = cmds.scrollField(text=button_data["command"], wordWrap=True, height=200)
+        command_field = cmds.scrollField(p=main_layout, text=button_data["command"], wordWrap=True, height=200)
 
         # Save and Cancel buttons
-        save_button = cmds.button(label="Save", command=lambda _: save_changes())
-        cancel_button = cmds.button(label="Cancel", command=lambda _: cmds.deleteUI(window))
+        save_button = cmds.button(p=main_layout, width=150, label="Save", command=lambda _: save_changes())
+        cancel_button = cmds.button(p=main_layout, width=150, label="Cancel", command=lambda _: self.close_layout_dialog())
 
         # Attach elements
         cmds.formLayout(
-            layout, edit=True,
+            main_layout, edit=True,
             attachForm=[
                 (command_type_radio, "top", 10), (command_type_radio, "left", 10), (command_type_radio, "right", 10),
-                (command_field, "left", 10), (command_field, "right", 10),
+                (command_field, "left", 10), (command_field, "right", 10), (command_field, "bottom", 40),
                 (save_button, "left", 10), (cancel_button, "right", 10),
             ],
             attachControl=[
@@ -451,9 +485,11 @@ class FloatingShelfUI:
             button_data["command"] = new_command
             self.save_shelf_prefs(self.shelves)
 
-            cmds.deleteUI(window)
+            self.close_layout_dialog()
 
-        cmds.showWindow(window)
+    def edit_button_command(self, button_data):
+        """Open a dialog to edit the button's command and type."""
+        cmds.layoutDialog(title="Edit Command", ui=lambda: self.create_button_command(button_data))
 
     @staticmethod
     def get_all_maya_icons():
@@ -468,8 +504,9 @@ class FloatingShelfUI:
         for path in all_paths:
             if os.path.isdir(path):
                 for extension in image_extensions:
-                    all_icons.extend(glob.glob(os.path.join(path, extension)))
-        all_icons = list(set(all_icons))
+                    icon_files = glob.glob(os.path.join(path, extension))
+                    all_icons.extend([os.path.basename(icon) for icon in icon_files])  # Extract only the filename
+        all_icons = list(set(all_icons))  # Remove duplicates
         all_icons.sort()
         return all_icons
 
@@ -509,6 +546,7 @@ class FloatingShelfUI:
 
         def apply_icon_and_close(icon, *args):
             cmds.shelfButton(button, edit=True, image=icon)
+            button_data["icon"] = icon
             self.save_shelf_prefs(self.shelves)
             self.close_layout_dialog()
 
@@ -522,16 +560,17 @@ class FloatingShelfUI:
             if selected_icon:
                 apply_icon_and_close(selected_icon[0])
 
-        main_layout = cmds.formLayout(numberOfDivisions=100)
+        main_layout = cmds.setParent(q=True)
 
         text_field = cmds.textField(placeholderText="Filter:", changeCommand=filter_icons)
         icon_list = cmds.textScrollList(numberOfRows=8, allowMultiSelection=False, selectCommand=update_icon_preview,
                                         height=150)
+        cmds.textScrollList(icon_list, edit=True, append=all_icons)
+
         image_control = cmds.image(width=300, height=150)
 
         select_button = cmds.button(label="Select", command=lambda x: select_image(button_data))
         browse_button = cmds.button(label="Browse", command=lambda x: browse_image(button_data))
-
         cmds.formLayout(main_layout, edit=True,
                         attachForm=[
                             (text_field, 'top', 5),
@@ -551,21 +590,14 @@ class FloatingShelfUI:
                             (icon_list, 'top', 5, text_field),
                             (image_control, 'top', 5, icon_list),
                             (select_button, 'top', 5, image_control),
-                            (browse_button, 'top', 5, image_control),
-                            (select_button, 'bottom', 5, icon_list),
-                            (browse_button, 'bottom', 5, icon_list)
+                            (browse_button, 'top', 5, image_control)
                         ],
                         attachPosition=[
-                            (select_button, 'right', 5, 50),
-                            (browse_button, 'left', 5, 50)
+                            (select_button, 'right', 0, 50),  # Updated positioning to ensure correct behavior
+                            (browse_button, 'left', 0, 50)  # Updated positioning to ensure correct behavior
                         ])
 
-        cmds.textScrollList(icon_list, edit=True, append=all_icons)
-
     def change_button_icon(self, button_data, button):
-        if cmds.window("iconBrowserWindow", exists=True):
-            cmds.deleteUI("iconBrowserWindow")
-
         cmds.layoutDialog(title="Select Icon", ui=lambda: self.create_icon_browser(button_data, button))
 
     def delete_button(self, button, button_data):
