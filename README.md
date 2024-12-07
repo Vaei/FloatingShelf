@@ -21,6 +21,9 @@ FloatingShelf.FloatingShelfUI()
 I bind it to F1, previously the 'Help' hotkey:
 ![image](https://github.com/user-attachments/assets/2edd10a8-35b5-42e7-93fe-4f86595dafa9)
 
+> [!TIP]
+> Every time I use the hotkey it toggles the menu
+
 ## Different Maya Versions
 On Windows, Maya saves prefs in `D:\Documents\maya\VERSION\prefs` by default. You can copy/paste `floating_sheves.json` to other versions to share your shelves between versions. You can also delete this file to reset your settings.
 
