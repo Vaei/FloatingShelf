@@ -55,22 +55,16 @@ class FloatingShelfUI:
         """Close the layout dialog if it is open."""
         cmds.layoutDialog(dismiss="Close")
 
-    def close_window(self):
-        if cmds.dockControl("floatingShelfDock", exists=True):
-            cmds.deleteUI("floatingShelfDock")
-        if cmds.window("floatingShelfUI", exists=True):
-            cmds.deleteUI("floatingShelfUI")
-
     def __init__(self):
         # Toggle the window if it is already open with each activation
         # Note: without evalDeferred, Maya will hard crash when closing the window due to the layoutDialog not being closed yet
         if cmds.dockControl("floatingShelfDock", exists=True):
             cmds.layoutDialog(dismiss="Close")
-            cmds.evalDeferred(lambda: self.close_window(), lowestPriority=True)
+            cmds.evalDeferred(lambda: self.delete_ui(), lowestPriority=True)
             return
         if cmds.window("floatingShelfUI", exists=True):
             cmds.layoutDialog(dismiss="Close")
-            cmds.evalDeferred(lambda: self.close_window(), lowestPriority=True)
+            cmds.evalDeferred(lambda: self.delete_ui(), lowestPriority=True)
             return
 
         self.shelves = self.load_shelf_prefs()
@@ -102,10 +96,8 @@ class FloatingShelfUI:
 
     def create_ui(self):
         """Create the main floating shelf UI as a dockable window."""
-        self.window = cmds.window("floatingShelfUI", title="Floating Shelf", sizeable=True, widthHeight=(400, 300), closeCommand=self.delete_ui)
+        self.window = cmds.window("floatingShelfUI", title="Floating Shelf", sizeable=True, widthHeight=(400, 300))
         self.layout = cmds.formLayout("floatingShelfLayout", parent=self.window)
-
-        cmds.scriptJob(uiDeleted=[self.window, lambda: self.delete_ui()])
 
         # Top toolbar
         self.toolbar = cmds.rowLayout(
@@ -154,7 +146,8 @@ class FloatingShelfUI:
             area="right",
             moveable=True,
             content=self.window,
-            floating=True
+            floating=True,
+            closeCommand = lambda: self.delete_ui()
         )
 
         self.monitor_window_resize()
@@ -230,7 +223,7 @@ class FloatingShelfUI:
 
     def about(self, *_):
         """Display information about the tool."""
-        cmds.layoutDialog(parent=self.window, title="About", ui=lambda: self.create_about_dialog())
+        cmds.layoutDialog(title="About", ui=lambda: self.create_about_dialog())
 
     def delete_shelf(self, *_):
         """Delete the current shelf and update the dropdown menu."""
@@ -573,7 +566,7 @@ class FloatingShelfUI:
         if cmds.window("iconBrowserWindow", exists=True):
             cmds.deleteUI("iconBrowserWindow")
 
-        cmds.layoutDialog(parent=self.window, title="Select Icon", ui=lambda: self.create_icon_browser(button_data, button))
+        cmds.layoutDialog(title="Select Icon", ui=lambda: self.create_icon_browser(button_data, button))
 
     def delete_button(self, button, button_data):
         """Delete a button and refresh the layout using deferred commands to ensure stability."""
