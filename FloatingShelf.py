@@ -6,7 +6,7 @@ import glob
 
 class FloatingShelfStatics:
     title = "Floating Shelf"
-    version = "100"
+    version = "101"
     version_flags = "-beta"
 
     window_name = "floatingShelfUI"
@@ -394,7 +394,7 @@ class FloatingShelfUI:
         """Run the command assigned to the button."""
         try:
             if button_data["type"] == "python":
-                exec(button_data["command"], {}, {})
+                exec(button_data["command"])
             elif button_data["type"] == "mel":
                 mel.eval(button_data["command"])
         except Exception as e:
