@@ -29,5 +29,8 @@ On Windows, Maya saves prefs in `D:\Documents\maya\VERSION\prefs` by default. Yo
 
 ## Changelog
 
+### 1.0.1
+* Fixed bug where globals() and locals() were not passed to `exec`, causing some scripts to not work properly
+
 ### 1.0.0
 * Initial Commit
