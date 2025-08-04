@@ -6,8 +6,8 @@ import glob
 
 class FloatingShelfStatics:
     title = "Floating Shelf"
-    version = "101"
-    version_flags = "-beta"
+    version = "110"
+    version_flags = ""
 
     window_name = "floatingShelfUI"
     dock_name = "floatingShelfDock"
@@ -21,7 +21,12 @@ class FloatingShelfStatics:
         "move_up": "moveLayerUp.png",
         "rename_shelf": "BluePencil.png",
         "add_button": "addClip_100.png",
+        "settings": "out_MASH_Options_150.png",
         "info": "info.png",
+    }
+    DEFAULT_SETTINGS = {
+        "width": 300,
+        "height": 170
     }
     SHELF_PREFS_PATH = os.path.join(cmds.internalVar(userPrefDir=True), "floating_shelves.json")
 
@@ -53,6 +58,26 @@ class FloatingShelfUI:
             raise
 
     @staticmethod
+    def ensure_settings_in_json(json_path, default_settings):
+        """Ensure the 'Settings' key exists in the JSON file without overwriting manual changes."""
+        if os.path.exists(json_path):
+            with open(json_path, "r") as f:
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}  # Handle corrupted JSON files gracefully
+        else:
+            data = {}
+
+        # Add 'Settings' key only if it doesn't exist
+        if "Settings" not in data:
+            data["Settings"] = default_settings
+            # Save the updated JSON without overwriting other keys
+            with open(json_path, "w") as f:
+                json.dump(data, f, indent=4)
+            print(f"'Settings' added to JSON file at {json_path}.")
+
+    @staticmethod
     def clear_layout(layout):
         """Delete all children of the given layout."""
         children = cmds.layout(layout, query=True, childArray=True) or []
@@ -76,14 +101,21 @@ class FloatingShelfUI:
             cmds.evalDeferred(lambda: self.delete_ui(), lowestPriority=True)
             return
 
+        # Ensure settings exists in json
+        json_path = FloatingShelfStatics.SHELF_PREFS_PATH
+
+        # Ensure settings are present in the JSON file
+        self.ensure_settings_in_json(json_path, FloatingShelfStatics.DEFAULT_SETTINGS)
+
         self.shelves = self.load_shelf_prefs()
+        self.settings = self.shelves.get("Settings", FloatingShelfStatics.DEFAULT_SETTINGS)
         self.default_shelf = self.shelves.get("_default", "Default")
         self.last_window_width = None  # Track the last window width for resize handling
 
         # Ensure at least one shelf exists
         if not self.shelves or "Default" not in self.shelves:
             cmds.warning("No shelves found. Creating a 'Default' shelf.")
-            self.shelves = {"Default": [], "_default": "Default"}
+            self.shelves = {"Default": [], "_default": "Default", "Settings": self.settings}
             self.save_shelf_prefs(self.shelves)
 
         # Validate the default shelf
@@ -111,18 +143,23 @@ class FloatingShelfUI:
         # Top toolbar
         self.toolbar = cmds.rowLayout(
             parent=self.layout,
-            numberOfColumns=7,
+            numberOfColumns=8,
             columnWidth5=(100, 25, 25, 25, 25),
             adjustableColumn=1,
             columnAlign=(1, "center"),
         )
         self.shelf_menu = cmds.optionMenu(parent=self.toolbar, changeCommand=self.change_shelf)
+
+        # Generate the dropdown menu
         self.update_dropdown_menu()
+
+        # Generate the settings menu
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["add_shelf"], ann="Add New Shelf", width=25, height=25, command=self.add_shelf)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["set_default"], ann="Set Default Shelf", width=25, height=25, command=self.set_default_shelf)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["move_up"], ann="Move Shelf Up", width=25, height=25, command=self.move_shelf_up)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["rename_shelf"], ann="Rename Shelf", width=25, height=25, command=self.rename_shelf)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["delete_shelf"], ann="Delete Shelf", width=25, height=25, command=self.delete_shelf)
+        cmds.iconTextButton(image=FloatingShelfStatics.ICONS["settings"], ann="Settings", width=25, height=25, command=self.settings_cmd)
         cmds.iconTextButton(image=FloatingShelfStatics.ICONS["info"], ann="About", width=25, height=25, command=self.about)
 
         # Scrollable layout for shelf buttons
@@ -154,8 +191,8 @@ class FloatingShelfUI:
             FloatingShelfStatics.dock_name,
             label="Floating Shelf",
             area="right",
-            width=300,
-            height=170,
+            width=self.settings["width"],
+            height=self.settings["height"],
             moveable=True,
             content=self.window,
             floating=True,
@@ -194,7 +231,7 @@ class FloatingShelfUI:
         """Rebuild the dropdown menu with all shelves."""
         cmds.optionMenu(self.shelf_menu, edit=True, deleteAllItems=True)  # Clear existing items
         for shelf_name in self.shelves.keys():
-            if shelf_name != "_default":
+            if shelf_name not in ["_default", "Settings"]:
                 cmds.menuItem(label=shelf_name, parent=self.shelf_menu)
 
         # Set the dropdown to the current shelf
@@ -213,6 +250,11 @@ class FloatingShelfUI:
         )
         if result == "OK":
             shelf_name = cmds.promptDialog(query=True, text=True)
+            # Cannot be named "Settings" or "Default"
+            if shelf_name in ["Settings"]:
+                cmds.error("Shelf name \'" + shelf_name + "\' is reserved by the system. Please choose another name.")
+                return
+
             if shelf_name and shelf_name not in self.shelves:
                 self.shelves[shelf_name] = []  # Add new shelf to data
                 self.current_shelf = shelf_name
@@ -220,7 +262,50 @@ class FloatingShelfUI:
                 self.update_dropdown_menu()  # Rebuild dropdown menu
                 self.load_shelf(shelf_name)  # Load the new shelf
             else:
-                cmds.warning(f"Shelf '{shelf_name}' already exists or is invalid.")
+                cmds.error(f"Shelf '{shelf_name}' already exists or is invalid.")
+
+    def reset_width_height(self, width_field, height_field):
+        """Reset width and height to default values."""
+        self.set_width(FloatingShelfStatics.DEFAULT_SETTINGS["width"])
+        self.set_height(FloatingShelfStatics.DEFAULT_SETTINGS["height"])
+        cmds.intFieldGrp(width_field, edit=True, value1=FloatingShelfStatics.DEFAULT_SETTINGS["width"])
+        cmds.intFieldGrp(height_field, edit=True, value1=FloatingShelfStatics.DEFAULT_SETTINGS["height"])
+        cmds.warning("Width and height reset to defaults.")
+
+    def set_width(self, width):
+        """Set the width of the dock control."""
+        if width < 300:
+            cmds.warning("Width must be at least 300 pixels to accommodate the menu.")
+            width = 300
+        self.settings["width"] = width
+        cmds.dockControl(FloatingShelfStatics.dock_name, edit=True, width=width)
+        self.save_shelf_prefs(self.shelves)
+        self.update_grid_columns(width)
+        self.rebuild_shelves()
+
+    def set_height(self, height):
+        """Set the height of the dock control."""
+        self.settings["height"] = height
+        cmds.dockControl(FloatingShelfStatics.dock_name, edit=True, height=height)
+        self.save_shelf_prefs(self.shelves)
+        self.update_grid_columns(self.settings["width"])
+        self.rebuild_shelves()
+
+    def create_settings_dialog(self):
+        """Create the settings dialog."""
+        cmds.columnLayout(adjustableColumn=True)
+        width_field = cmds.intFieldGrp(
+            label="Width",
+            value1=self.settings["width"],
+            changeCommand=lambda value: self.set_width(value)
+        )
+        height_field = cmds.intFieldGrp(
+            label="Height",
+            value1=self.settings["height"],
+            changeCommand=lambda value: self.set_height(value)
+        )
+        cmds.separator(style="none", height=10)
+        cmds.button(label="Reset Width/Height", command=lambda _: self.reset_width_height(width_field, height_field))
 
     def create_about_dialog(self):
         """Create the about dialog."""
@@ -232,6 +317,10 @@ class FloatingShelfUI:
         cmds.text(label="https://github.com/Vaei/FloatingShelf")
         cmds.separator(style="none", height=10)
         cmds.button(label="Close", command=lambda _: self.close_layout_dialog())
+
+    def settings_cmd(self, *_):
+        """Display the settings dialog."""
+        cmds.layoutDialog(title="Settings", ui=lambda: self.create_settings_dialog())
 
     def about(self, *_):
         """Display information about the tool."""
