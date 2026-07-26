@@ -7,7 +7,7 @@ import traceback
 
 class FloatingShelfStatics:
     title = "Floating Shelf"
-    version = "110"
+    version = "111"
     version_flags = ""
 
     window_name = "floatingShelfUI"
