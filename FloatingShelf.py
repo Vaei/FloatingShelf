@@ -3,6 +3,7 @@ import maya.mel as mel
 import json
 import os
 import glob
+import traceback
 
 class FloatingShelfStatics:
     title = "Floating Shelf"
@@ -483,10 +484,15 @@ class FloatingShelfUI:
         """Run the command assigned to the button."""
         try:
             if button_data["type"] == "python":
-                exec(button_data["command"])
+                # One dict for globals and locals, so functions the command defines can
+                # see each other. __main__ makes pasted scripts run their entry guard.
+                scope = {"__name__": "__main__", "__builtins__": __builtins__,
+                         "cmds": cmds, "mel": mel}
+                exec(button_data["command"], scope)
             elif button_data["type"] == "mel":
                 mel.eval(button_data["command"])
         except Exception as e:
+            traceback.print_exc()
             cmds.warning(f"Failed to execute button command: {e}")
 
     def move_button(self, button_data, direction):
